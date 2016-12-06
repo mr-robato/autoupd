@@ -1,0 +1,3 @@
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+mylog=/var/log/daily.update.log
+22 17 * * * root apt-get update > $mylog && apt-get -y dist-upgrade >> $mylog ; apt-get -y autoremove >> $mylog ; checkreboot >> $mylog

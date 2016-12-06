@@ -1,0 +1,10 @@
+#!/bin/bash
+# Restart if running kernel differs from latest installed
+
+current=$(uname -r | grep -oP '\-[0-9]+-')
+latest=$(ls -1 /boot/vmlinuz-* | grep -oP '\-[0-9]+-' | sort -V | uniq | tail -1)
+
+if [[ $current != $latest ]]
+   then shutdown -r now
+fi
+
