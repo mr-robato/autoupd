@@ -4,6 +4,6 @@ sudo install -m 600 update.cron /etc/cron.d/updatebox
 
 apt-get update ; apt-get -y dist-upgrade ; apt-get -y autoremove
 
-apt-get -y install openvpn
 mkdir -p /etc/openvpn/ccd
+apt-get -y install openvpn
 
