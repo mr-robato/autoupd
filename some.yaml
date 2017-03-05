@@ -1,0 +1,216 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS CloudFormation Template'
+Parameters:
+  InstanceType:
+    AllowedValues:
+    - t2.nano
+    - t2.micro
+    Default: t2.nano
+    Type: String
+  KeyName:
+    Description: Name of Keypair
+    Type: AWS::EC2::KeyPair::KeyName
+  ServerKey:
+    NoEcho: true
+    Type: String
+  ServerParams:
+    NoEcho: true
+    Type: String
+Mappings:
+  AWSInstanceType2Arch:
+    t2.nano:
+      Arch: HVM64
+    t2.micro:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    ap-northeast-1:
+      HVM64: ami-1bfdb67c
+    ap-northeast-2:
+      HVM64: ami-0500d06b
+    ap-southeast-1:
+      HVM64: ami-ee7bca8d
+    ap-southeast-2:
+      HVM64: ami-4e686b2d
+    cn-north-1:
+      HVM64: ami-7b74c91f
+    eu-central-1:
+      HVM64: ami-bc5b48d0
+    eu-west-1:
+      HVM64: ami-405f7226
+    us-east-2:
+      HVM64: ami-fcc19b99
+    us-east-1:
+      HVM64: ami-f4cc1de2
+    us-west-1:
+      HVM64: ami-d5ea86b5
+    us-west-2:
+      HVM64: ami-a58d0dc5
+Resources:
+  VPNServer:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+         Timeout: PT15M
+    Properties:
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+      InstanceType:
+        Ref: InstanceType
+      KeyName:
+        Ref: KeyName
+      SecurityGroups:
+      - Ref: VPNServerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            git clone https://github.com/mr-robato/autoupd.git
+            cd autoupd
+            ./install
+            cd ..
+            rm -rf autoupd
+            sed -i 's/^Port 22/Port 60385/' /etc/ssh/sshd_config
+            sed -i 's/#net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+            cat > /etc/init.d/firewall << EOF
+            #!/usr/bin/env bash
+            iptables -t nat -A POSTROUTING -j SNAT --to $(ec2metadata --local-ipv4) \! -s 10.0.102.0/30
+            EOF
+            chmod 755 /etc/init.d/firewall
+            /etc/init.d/firewall
+            cd /etc/rc2.d
+            ln -s /etc/init.d/firewall S02firewall
+            cat > /etc/openvpn/server.conf << EOF
+            local $(ec2metadata --local-ipv4)
+            port 37908
+            proto tcp
+            dev tun0
+            ca /etc/ssl/certs/ca.crt
+            cert /etc/ssl/certs/server.crt
+            key /etc/ssl/private/server.key
+            dh /etc/ssl/private/dh4096.pem
+            #crl-verify /etc/openvpn/mycrl.pem
+            server 10.0.102.0 255.255.255.0
+            push "dhcp-option DNS 8.8.8.8"
+            client-config-dir ccd
+            ifconfig-pool-persist ipp.txt
+            keepalive 10 120
+            user nobody
+            group nogroup
+            persist-key
+            persist-tun
+            #comp lzo
+            status /var/log/openvpn-state.log
+            log    /var/log/openvpn.log
+            verb 3
+            EOF
+            cat > /etc/ssl/certs/ca.crt <<EOFILE
+            -----BEGIN CERTIFICATE-----
+            MIIHEjCCBPqgAwIBAgIJAJETvUuSwoR0MA0GCSqGSIb3DQEBCwUAMIG2MQswCQYD
+            VQQGEwJVUzELMAkGA1UECBMCQ0ExFTATBgNVBAcTDFNhbkZyYW5jaXNjbzEVMBMG
+            A1UEChMMRm9ydC1GdW5zdG9uMR0wGwYDVQQLExRNeU9yZ2FuaXphdGlvbmFsVW5p
+            dDEYMBYGA1UEAxMPRm9ydC1GdW5zdG9uIENBMRAwDgYDVQQpEwdFYXN5UlNBMSEw
+            HwYJKoZIhvcNAQkBFhJtZUBteWhvc3QubXlkb21haW4wHhcNMTUwOTA4MTA1NDQ5
+            WhcNMjUwOTA1MTA1NDQ5WjCBtjELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMRUw
+            EwYDVQQHEwxTYW5GcmFuY2lzY28xFTATBgNVBAoTDEZvcnQtRnVuc3RvbjEdMBsG
+            A1UECxMUTXlPcmdhbml6YXRpb25hbFVuaXQxGDAWBgNVBAMTD0ZvcnQtRnVuc3Rv
+            biBDQTEQMA4GA1UEKRMHRWFzeVJTQTEhMB8GCSqGSIb3DQEJARYSbWVAbXlob3N0
+            Lm15ZG9tYWluMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAuPKQQ7dO
+            xSk6dXq9k6uBa8KcgpnsUTheG3aGm3ClgCWlY3Bu20UvxkQlv4V3bYNfUOXCZH7i
+            FP7/AaEhsohfA4m8k627298qAI7ZmvllaxytyK3oZ4jKR3a6c6/1mveHnyodSi5q
+            L2UawVFBqiRx2dD6hW5VAJLy6kBVfV32RiE66rrB+82zFfMm3ReNLNbXwuVp595/
+            xJdyF5NQhMqhyEDEiZT0iiCUPWI+FZcOqddtdbH7sIHipIolIQ7+NhZpNkM2cG8+
+            a39Uii08YhsdvPZAAS8S+P4AnSJO03ZzuNKKagUghUIzk+ICL+QHfW/inUC7C5Gu
+            mTuG2dlrpbm7ax5xTm1Z7OvPDQ2aPjAQYKTFohJUmcFlWrzl9k+UZSrWFr2j/TrP
+            13nSUkNQJeGz6G1HuBW1XUPDvOVVK8aDmF+fy/pgZlpZUziDbiD5jvf3hw7Ct8Bs
+            wm2o/M2U11eMnrIcwF3EduJobJuV2YLlZTdO5I+mAlB7wyOGWY8n7LRWLzwPYL8z
+            C2qBgqYxQMyoem0z01Aok28CEvCveCBEwGMPXxTu/P6IcIJYXiZvaMGaUQn1W92a
+            xcxGQJ8rOHbUROpFM7IUPCJDX3oJwvGfAJv55xEjK0B9rApDVNazTP8Ep87IGZmz
+            PbUOLwg8eVUqSmrKf92RcKW2VhfqHI9+YB8CAwEAAaOCAR8wggEbMB0GA1UdDgQW
+            BBRzRRLE/lQ9FkGKaJRhhAJBBUMu5TCB6wYDVR0jBIHjMIHggBRzRRLE/lQ9FkGK
+            aJRhhAJBBUMu5aGBvKSBuTCBtjELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMRUw
+            EwYDVQQHEwxTYW5GcmFuY2lzY28xFTATBgNVBAoTDEZvcnQtRnVuc3RvbjEdMBsG
+            A1UECxMUTXlPcmdhbml6YXRpb25hbFVuaXQxGDAWBgNVBAMTD0ZvcnQtRnVuc3Rv
+            biBDQTEQMA4GA1UEKRMHRWFzeVJTQTEhMB8GCSqGSIb3DQEJARYSbWVAbXlob3N0
+            Lm15ZG9tYWluggkAkRO9S5LChHQwDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsF
+            AAOCAgEAO541LFIHZGl7DSJRasR2omvWUHo6mEo9bwsa9M8hIS/F/foKlBage7TA
+            9YP82igbdy5w0QX7VoFUGrGBCtPgXV5HNIACDGhE7VZfISpi1c8Wbvn0R9YOryNq
+            5Pt7Ga5ps877q7uigcWs3ZXL0Aneyl5jA68na2LN+ephQJMLkRi5rBkPMX/QX7XT
+            J4Q208H/VpEZNhrX9seXTdl0sV7Lkw7LAqK/cUA6R10tDrHXDD7vhq2o3PFgVUy7
+            rsj828WOKrexeYg6MxM93iYqpb0MSKWdYc93OxTN9BHOIFxPgGjMDTC7iy7ONVgF
+            OzzICkZQiZW7oJa/4JNzt0LfZqap85SnbZ68tpktKAN0+TNNT4FUBXeoKwK05PmP
+            xP2VZ7rXsMDV4G0WeCaS/CdId3uyMnaLzzTKoKdFTjJP+lEclXcgbFAHE7K96wPJ
+            tNDfEWNsfdn76MkKtWy2QjcDP9+u+pzzK0Ufp8qnQG4z8qXcl1pntbDcd/uuPxrx
+            IE0R4aI5Vd4LSCtIZh7lxEAfdCgnPG3hGcViSoaJJmiG1P2jSVITbeuuSyJiMS5/
+            iS3KWM1fStEhzuuisE5xsZWmowjVUVCpzzhaC8wGbzhc2r9I1dMwbuqjT89pSZXA
+            ebgciSom5QAhhUREKcqTy3VouLEuxZDU4smoxg1fusd2SkYOpmA=
+            -----END CERTIFICATE-----
+            EOFILE
+            cat > /etc/ssl/certs/server.crt <<EOFILE
+            -----BEGIN CERTIFICATE-----
+            MIIHfDCCBWSgAwIBAgIBATANBgkqhkiG9w0BAQsFADCBtjELMAkGA1UEBhMCVVMx
+            CzAJBgNVBAgTAkNBMRUwEwYDVQQHEwxTYW5GcmFuY2lzY28xFTATBgNVBAoTDEZv
+            cnQtRnVuc3RvbjEdMBsGA1UECxMUTXlPcmdhbml6YXRpb25hbFVuaXQxGDAWBgNV
+            BAMTD0ZvcnQtRnVuc3RvbiBDQTEQMA4GA1UEKRMHRWFzeVJTQTEhMB8GCSqGSIb3
+            DQEJARYSbWVAbXlob3N0Lm15ZG9tYWluMB4XDTE1MDkwODEwNTUwMVoXDTE5MDMz
+            MTEwNTUwMVowga0xCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJDQTEVMBMGA1UEBxMM
+            U2FuRnJhbmNpc2NvMRUwEwYDVQQKEwxGb3J0LUZ1bnN0b24xHTAbBgNVBAsTFE15
+            T3JnYW5pemF0aW9uYWxVbml0MQ8wDQYDVQQDEwZzZXJ2ZXIxEDAOBgNVBCkTB0Vh
+            c3lSU0ExITAfBgkqhkiG9w0BCQEWEm1lQG15aG9zdC5teWRvbWFpbjCCAiIwDQYJ
+            KoZIhvcNAQEBBQADggIPADCCAgoCggIBAOpe2u++oI0RiN+UOOC24QNuTmSH4fwJ
+            nvz9pBKyz2GTQmVMraeyVUN1JAjy0WfM5GXOeTSzox99MZ97J9Ja5t7WxCaHDI6/
+            hP1GH9DBVqbQFfI56oglihkkb1fTZ0FheItMXLU/ttgVDclSshLmC364dsG7IVVR
+            YCEfzUa+KXAFKRCLyIaSdQUCrg51PDjRGGylGETtM0rVnS24vnlzKir5GUfynWad
+            PIFv3L2QnBAqSijlK0lssGE3lEYAHckD8gQ2EBNJ2URey9zz6h2JhpL+MRYR0aJn
+            TKhhij/mXCbDdV7PsFLtFEb8BGrFA80nKPApkAdCua5LB5BC1BHtALSLfjNqdnZM
+            I8MJIiO7gDHtizCyJI/pgAfH0pziN5PePrlGo+ZGEoClXWnRg8PeVkxsUhgcAA6p
+            WWU8mVy0ilXplWo3xpF/7dwYj+jOY+bCUXbdHX2v9XDqbh2SWDQJq2crQKmvo4hS
+            QcX7CEW/jTFiQfl6tvGI4d3jyiyVvrtRzDguq837ZUUiHGga8ghHe3fhCr2ZJIIG
+            4hp3o4hD4Opy131HkLmHe/ZtY2ZmK7eQI5FvHlcJH5PMWs4AhD3Ts4pazuXe8rgG
+            b4N/pOcnwgzAqB4gQy0SOsfdtaoT71BqoHcxyCftLyai1Yil56QbQReFDO6kFjP9
+            RxK1RGHMXVMBAgMBAAGjggGaMIIBljAJBgNVHRMEAjAAMBEGCWCGSAGG+EIBAQQE
+            AwIGQDA0BglghkgBhvhCAQ0EJxYlRWFzeS1SU0EgR2VuZXJhdGVkIFNlcnZlciBD
+            ZXJ0aWZpY2F0ZTAdBgNVHQ4EFgQUTwQRxSlJvfP2YLXb0nJAUJvdsiAwgesGA1Ud
+            IwSB4zCB4IAUc0USxP5UPRZBimiUYYQCQQVDLuWhgbykgbkwgbYxCzAJBgNVBAYT
+            AlVTMQswCQYDVQQIEwJDQTEVMBMGA1UEBxMMU2FuRnJhbmNpc2NvMRUwEwYDVQQK
+            EwxGb3J0LUZ1bnN0b24xHTAbBgNVBAsTFE15T3JnYW5pemF0aW9uYWxVbml0MRgw
+            FgYDVQQDEw9Gb3J0LUZ1bnN0b24gQ0ExEDAOBgNVBCkTB0Vhc3lSU0ExITAfBgkq
+            hkiG9w0BCQEWEm1lQG15aG9zdC5teWRvbWFpboIJAJETvUuSwoR0MBMGA1UdJQQM
+            MAoGCCsGAQUFBwMBMAsGA1UdDwQEAwIFoDARBgNVHREECjAIggZzZXJ2ZXIwDQYJ
+            KoZIhvcNAQELBQADggIBAKFa+Xi5qERLdufxCF8igII5NEUIQwY+6OkxXLYZG018
+            YaHxSRmJ63+blnuZpN6452G3xglB2bmXKuCekX/sn1N/9Zi+0Jw8tqRmiLo6JQuT
+            rLMwnP/99xNaWcg9A/jaXS1SLtjiz7ePTZ31MaWyOW6zkOgEPO4t9cNUvIu4nLnx
+            ioWn8Gabm2R1nYwOrFpQOfFx/yGPKa8MDVstDRcgOKDgfESLw3EkNN64gP997wW8
+            h3d1TXyUuf4vt1MyYoqCFu6dUb1Vmr8vkwddDByl+MJ9uQSCZ1B15CAplR8WVP+p
+            ujdABBwpqUO7DA2xTUsBBXQUJ8YSc7Qt6RMrY4Co5AkuSVA0QiwdrF6xTKUkY8Kk
+            +/VDCijH4nyuvxzBzdHlWtZqaAbpFSqoDl2DJVa1Dr2qKcUSLlgkRH2rxbBypVZM
+            2OHqR5BvqO5PsSmJBbHZtK+cG7YSm2BU8RddRQ0EZ+W3KkchVavb7VzUZe8lMiae
+            kXHostbpektjR9BUCPIdatbcWD4wdu4V/cgNZykWJ+unQ6NVJIF/RzVXE2q/sVfv
+            r48pwlgrUmIXXY8ZruN+2+Ik1D4jykRlX1DXbAabIVbs531O4iHWWmJ0lx2JYsOr
+            Mfl7kowNuaQHSY696LT93sWTNFQn/r6r3ENIxxxS9lmu9S31sSDWDoUs7Zk+UUuo
+            -----END CERTIFICATE-----
+            EOFILE
+            umask 277
+            cat > /etc/ssl/private/server.key <<EOFILE
+            ${ServerKey}
+            EOFILE
+            cat > /etc/ssl/private/dh4096.pem <<EOFILE
+            ${ServerParams}
+            EOFILE
+            systemctl start openvpn
+            shutdown -r now
+  VPNServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Enable access"
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: '37908'
+        IpProtocol: tcp
+        ToPort: '37908'
+      - CidrIp: 0.0.0.0/0
+        FromPort: '60385'
+        IpProtocol: tcp
+        ToPort: '60385'
+Outputs:
+  PublicIP:
+    Description: EC2 public IP
+    Value: !GetAtt VPNServer.PublicIp
