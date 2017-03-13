@@ -2,6 +2,7 @@
 sudo install -m 755 checkreboot /usr/local/bin
 sudo install -m 600 update.cron /etc/cron.d/updatebox
 
+export DEBIAN_FRONTEND=noninteractive
 apt-get update ; apt-get -y dist-upgrade ; apt-get -y autoremove
 
 mkdir -p /etc/openvpn/ccd
